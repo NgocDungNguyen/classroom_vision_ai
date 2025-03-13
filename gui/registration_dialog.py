@@ -70,7 +70,7 @@ class RegistrationDialog(QDialog):
         
         # Email input
         email_layout = QHBoxLayout()
-        email_label = QLabel("Email:")
+        email_label = QLabel("Class Name:")
         self.email_input = QLineEdit()
         email_layout.addWidget(email_label)
         email_layout.addWidget(self.email_input)
@@ -204,195 +204,59 @@ class RegistrationDialog(QDialog):
             self.email_input.setText(student[2])
     
     def save_student(self):
-        """Save student data to database."""
+        """Save student information."""
+        # Validate inputs
         student_id = self.id_input.text().strip()
         name = self.name_input.text().strip()
-        email = self.email_input.text().strip()
+        class_name = self.email_input.text().strip()  # Using email field for class name temporarily
         
-        # Validate inputs
-        if not student_id or not name or not email:
-            msg = "Please fill in all fields."
-            QMessageBox.warning(self, "Validation Error", msg)
+        if not student_id or not name or not class_name:
+            QMessageBox.warning(
+                self, "Validation Error",
+                "Please fill in all required fields."
+            )
             return
         
-        if not self.student_id and not self.face_encoding:
-            msg = "Please capture a face photo."
-            QMessageBox.warning(self, "Face Required", msg)
+        if self.face_image is None or self.face_encoding is None:
+            QMessageBox.warning(
+                self, "Validation Error",
+                "Please capture a face image."
+            )
             return
         
         try:
-            # Save face image if captured
-            if self.face_image is not None:
-                face_path = f"faces/{student_id}.jpg"
-                cv2.imwrite(face_path, self.face_image)
+            # Save face image
+            image_path = f"faces/{student_id}.jpg"
+            cv2.imwrite(image_path, self.face_image)
             
-            # Add or update student
-            if self.student_id:
-                self.parent().database.update_student(
-                    student_id, name, email
+            # Add student to database
+            success = self.parent().database.add_student(
+                student_id,
+                name,
+                class_name,
+                self.face_encoding.tobytes(),
+                image_path
+            )
+            
+            if success:
+                QMessageBox.information(
+                    self, "Success",
+                    f"Student '{name}' has been registered successfully."
                 )
+                self.accept()
             else:
-                self.parent().database.add_student(
-                    student_id, name, email, self.face_encoding
+                QMessageBox.warning(
+                    self, "Error",
+                    "Failed to register student. Please try again."
                 )
-            
-            self.accept()
-            
         except Exception as e:
             QMessageBox.critical(
-                self, "Error", f"Failed to save student: {str(e)}"
+                self, "Error",
+                f"An error occurred: {str(e)}"
             )
-    
-from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QGridLayout, QMessageBox
-)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QImage, QPixmap
-import cv2
-import os
-
-
-class RegistrationDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Register New Student")
-        self.setMinimumSize(1000, 600)
-        self.setup_ui()
-        self.setup_camera()
-        self.captured_images = []
-
-    def setup_ui(self):
-        layout = QGridLayout()
-        self.setLayout(layout)
-        
-        # Style the dialog
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #f0f2f5;
-            }
-            QLabel {
-                color: #333333;
-                font-size: 14px;
-            }
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                background: white;
-            }
-            QPushButton {
-                background-color: #1976d2;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1565c0;
-            }
-        """)
-
-        # Left panel - Camera feed
-        self.camera_label = QLabel()
-        self.camera_label.setFixedSize(640, 480)
-        self.camera_label.setStyleSheet(
-            "border: 2px solid #ddd; border-radius: 8px;"
-        )
-        layout.addWidget(self.camera_label, 0, 0, 4, 1)
-
-        # Right panel - Student info
-        info_layout = QVBoxLayout()
-        
-        # Student ID
-        id_layout = QHBoxLayout()
-        id_label = QLabel("Student ID:")
-        self.id_input = QLineEdit()
-        id_layout.addWidget(id_label)
-        id_layout.addWidget(self.id_input)
-        info_layout.addLayout(id_layout)
-
-        # Student Name
-        name_layout = QHBoxLayout()
-        name_label = QLabel("Full Name:")
-        self.name_input = QLineEdit()
-        name_layout.addWidget(name_label)
-        name_layout.addWidget(self.name_input)
-        info_layout.addLayout(name_layout)
-
-        # Capture status
-        self.status_label = QLabel("Look at different angles for capture")
-        self.status_label.setStyleSheet("color: #666; font-style: italic;")
-        info_layout.addWidget(self.status_label)
-
-        # Capture button
-        self.capture_btn = QPushButton("Capture Face (0/3)")
-        self.capture_btn.clicked.connect(self.capture_face)
-        info_layout.addWidget(self.capture_btn)
-
-        # Save button
-        self.save_btn = QPushButton("Save Student")
-        self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self.save_student)
-        info_layout.addWidget(self.save_btn)
-
-        layout.addLayout(info_layout, 0, 1)
-
-    def setup_camera(self):
-        self.capture = cv2.VideoCapture(0)
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
-        self.timer.start(30)
-
-    def update_frame(self):
-        ret, frame = self.capture.read()
-        if ret:
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-            image = QImage(
-                rgb_frame.data, w, h, bytes_per_line, QImage.Format_RGB888
-            )
-            self.camera_label.setPixmap(
-                QPixmap.fromImage(image).scaled(640, 480, Qt.KeepAspectRatio)
-            )
-
-    def capture_face(self):
-        if len(self.captured_images) < 3:
-            ret, frame = self.capture.read()
-            if ret:
-                self.captured_images.append(frame)
-                self.capture_btn.setText(
-                    f"Capture Face ({len(self.captured_images)}/3)"
-                )
-                if len(self.captured_images) == 3:
-                    self.save_btn.setEnabled(True)
-                    self.status_label.setText("Ready to save!")
-                    self.status_label.setStyleSheet(
-                        "color: #4CAF50; font-weight: bold;"
-                    )
-
-    def save_student(self):
-        student_id = self.id_input.text().strip()
-        name = self.name_input.text().strip()
-        
-        if not student_id or not name:
-            QMessageBox.warning(self, "Error", "Please fill in all fields")
-            return
-
-        # Create directory for student faces
-        student_dir = os.path.join("faces", student_id)
-        os.makedirs(student_dir, exist_ok=True)
-        
-        # Save captured images
-        for i, image in enumerate(self.captured_images):
-            path = os.path.join(student_dir, f"face_{i}.jpg")
-            cv2.imwrite(path, image)
-
-        self.accept()
-
+            
     def closeEvent(self, event):
-        self.capture.release()
-        self.timer.stop()
+        """Handle dialog close event."""
+        if self.cap and self.cap.isOpened():
+            self.cap.release()
         event.accept()

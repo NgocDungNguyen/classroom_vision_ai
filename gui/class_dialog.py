@@ -1,188 +1,371 @@
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
-                             QLabel, QLineEdit, QMessageBox, QComboBox,
-                             QTimeEdit, QListWidget, QGroupBox)
-from PyQt5.QtCore import Qt, QTime
-import uuid
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                           QLineEdit, QPushButton, QMessageBox, QComboBox,
+                           QFormLayout, QGroupBox, QDialogButtonBox, QListWidget,
+                           QListWidgetItem, QSplitter, QWidget, QTableWidget,
+                           QTableWidgetItem, QHeaderView, QAbstractItemView,
+                           QCheckBox, QDateTimeEdit)
+from PyQt5.QtCore import Qt, pyqtSignal, QDateTime
+from PyQt5.QtGui import QIcon, QFont
+import os
+from datetime import datetime
 
-class ClassManagementDialog(QDialog):
-    def __init__(self, student_manager, parent=None):
+class ClassDialog(QDialog):
+    """Dialog for managing class information and student enrollment."""
+    
+    class_updated = pyqtSignal(dict)
+    
+    def __init__(self, database, parent=None, class_id=None):
         super().__init__(parent)
-        self.student_manager = student_manager
-        self.setup_ui()
-
-    def setup_ui(self):
-        """Setup the dialog UI."""
+        self.database = database
+        self.class_id = class_id
+        self.class_data = None
+        self.enrolled_students = []
+        self.available_students = []
+        
+        # Set window properties
         self.setWindowTitle("Class Management")
-        self.setModal(True)
-        self.setMinimumSize(800, 600)
-
-        layout = QVBoxLayout(self)
-
-        # Class Information
-        class_group = QGroupBox("Class Information")
-        class_layout = QVBoxLayout()
-
-        # Class ID and Name
-        id_name_layout = QHBoxLayout()
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(600)
+        
+        # Load class data if editing existing class
+        if class_id:
+            self.class_data = self.database.get_class(class_id)
+            if self.class_data:
+                self.setWindowTitle(f"Edit Class: {self.class_data['name']}")
+        
+        self.setup_ui()
+        self.load_students()
+        
+        # If editing, populate form with class data
+        if self.class_data:
+            self.populate_form()
+    
+    def setup_ui(self):
+        """Set up the user interface."""
+        # Main layout
+        main_layout = QVBoxLayout()
+        
+        # Class information section
+        class_info_group = QGroupBox("Class Information")
+        form_layout = QFormLayout()
         
         # Class ID
-        id_layout = QHBoxLayout()
-        id_layout.addWidget(QLabel("Class ID:"))
         self.id_input = QLineEdit()
-        id_layout.addWidget(self.id_input)
-        id_name_layout.addLayout(id_layout)
-
+        if self.class_id:
+            self.id_input.setText(str(self.class_id))
+            self.id_input.setReadOnly(True)
+        else:
+            self.id_input.setPlaceholderText("e.g., CS101")
+        form_layout.addRow("Class ID:", self.id_input)
+        
         # Class Name
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("Name:"))
         self.name_input = QLineEdit()
-        name_layout.addWidget(self.name_input)
-        id_name_layout.addLayout(name_layout)
-
-        class_layout.addLayout(id_name_layout)
-
-        # Subject and Room
-        subject_room_layout = QHBoxLayout()
+        self.name_input.setPlaceholderText("e.g., Introduction to Computer Science")
+        form_layout.addRow("Class Name:", self.name_input)
         
         # Subject
-        subject_layout = QHBoxLayout()
-        subject_layout.addWidget(QLabel("Subject:"))
         self.subject_input = QLineEdit()
-        subject_layout.addWidget(self.subject_input)
-        subject_room_layout.addLayout(subject_layout)
-
+        self.subject_input.setPlaceholderText("e.g., Computer Science")
+        form_layout.addRow("Subject:", self.subject_input)
+        
         # Room
-        room_layout = QHBoxLayout()
-        room_layout.addWidget(QLabel("Room:"))
-        self.room_input = QLineEdit()
-        room_layout.addWidget(self.room_input)
-        subject_room_layout.addLayout(room_layout)
-
-        class_layout.addLayout(subject_room_layout)
-
+        self.location_input = QLineEdit()
+        self.location_input.setPlaceholderText("e.g., Room 101")
+        form_layout.addRow("Room:", self.location_input)
+        
         # Schedule
-        schedule_layout = QHBoxLayout()
+        schedule_group = QGroupBox("Class Schedule")
+        schedule_layout = QVBoxLayout()
         
-        # Day selection
-        schedule_layout.addWidget(QLabel("Day:"))
-        self.day_combo = QComboBox()
-        self.day_combo.addItems(["Monday", "Tuesday", "Wednesday", 
-                                "Thursday", "Friday", "Saturday", "Sunday"])
-        schedule_layout.addWidget(self.day_combo)
-
-        # Time selection
-        schedule_layout.addWidget(QLabel("Start Time:"))
-        self.start_time = QTimeEdit()
-        self.start_time.setDisplayFormat("HH:mm")
-        schedule_layout.addWidget(self.start_time)
-
-        schedule_layout.addWidget(QLabel("End Time:"))
-        self.end_time = QTimeEdit()
-        self.end_time.setDisplayFormat("HH:mm")
-        schedule_layout.addWidget(self.end_time)
-
-        class_layout.addLayout(schedule_layout)
-
-        class_group.setLayout(class_layout)
-        layout.addWidget(class_group)
-
-        # Student Management
-        student_group = QGroupBox("Student Management")
-        student_layout = QHBoxLayout()
-
-        # Available students
+        # Start time
+        start_time_layout = QHBoxLayout()
+        start_time_layout.addWidget(QLabel("Start Time:"))
+        self.start_time_edit = QDateTimeEdit()
+        self.start_time_edit.setDisplayFormat("yyyy-MM-dd hh:mm AP")
+        self.start_time_edit.setDateTime(QDateTime.currentDateTime())
+        start_time_layout.addWidget(self.start_time_edit)
+        schedule_layout.addLayout(start_time_layout)
+        
+        # End time
+        end_time_layout = QHBoxLayout()
+        end_time_layout.addWidget(QLabel("End Time:"))
+        self.end_time_edit = QDateTimeEdit()
+        self.end_time_edit.setDisplayFormat("yyyy-MM-dd hh:mm AP")
+        self.end_time_edit.setDateTime(
+            QDateTime.currentDateTime().addSecs(3600)  # Add 1 hour
+        )
+        end_time_layout.addWidget(self.end_time_edit)
+        schedule_layout.addLayout(end_time_layout)
+        
+        schedule_group.setLayout(schedule_layout)
+        form_layout.addRow(schedule_group)
+        
+        class_info_group.setLayout(form_layout)
+        main_layout.addWidget(class_info_group)
+        
+        # Student enrollment section
+        enrollment_group = QGroupBox("Student Enrollment")
+        enrollment_layout = QHBoxLayout()
+        
+        # Available students list
+        available_group = QGroupBox("Available Students")
         available_layout = QVBoxLayout()
-        available_layout.addWidget(QLabel("Available Students:"))
-        self.available_list = QListWidget()
-        available_layout.addWidget(self.available_list)
-        student_layout.addLayout(available_layout)
-
-        # Add/Remove buttons
-        button_layout = QVBoxLayout()
-        self.add_button = QPushButton("Add >")
-        self.add_button.clicked.connect(self.add_students)
-        self.remove_button = QPushButton("< Remove")
-        self.remove_button.clicked.connect(self.remove_students)
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        student_layout.addLayout(button_layout)
-
-        # Enrolled students
-        enrolled_layout = QVBoxLayout()
-        enrolled_layout.addWidget(QLabel("Enrolled Students:"))
-        self.enrolled_list = QListWidget()
-        enrolled_layout.addWidget(self.enrolled_list)
-        student_layout.addLayout(enrolled_layout)
-
-        student_group.setLayout(student_layout)
-        layout.addWidget(student_group)
-
-        # Dialog buttons
-        button_layout = QHBoxLayout()
-        save_button = QPushButton("Save")
-        save_button.clicked.connect(self.save_class)
-        cancel_button = QPushButton("Cancel")
-        cancel_button.clicked.connect(self.reject)
         
-        button_layout.addWidget(save_button)
-        button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
-
-        # Load existing students
-        self.load_students()
-
+        self.available_list = QListWidget()
+        self.available_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        available_layout.addWidget(self.available_list)
+        
+        # Add button
+        add_btn = QPushButton("Add >>")
+        add_btn.clicked.connect(self.add_students)
+        available_layout.addWidget(add_btn)
+        
+        available_group.setLayout(available_layout)
+        enrollment_layout.addWidget(available_group)
+        
+        # Enrolled students list
+        enrolled_group = QGroupBox("Enrolled Students")
+        enrolled_layout = QVBoxLayout()
+        
+        self.enrolled_list = QListWidget()
+        self.enrolled_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        enrolled_layout.addWidget(self.enrolled_list)
+        
+        # Remove button
+        remove_btn = QPushButton("<< Remove")
+        remove_btn.clicked.connect(self.remove_students)
+        enrolled_layout.addWidget(remove_btn)
+        
+        enrolled_group.setLayout(enrolled_layout)
+        enrollment_layout.addWidget(enrolled_group)
+        
+        enrollment_group.setLayout(enrollment_layout)
+        main_layout.addWidget(enrollment_group)
+        
+        # Dialog buttons
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Save | QDialogButtonBox.Cancel
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        main_layout.addWidget(button_box)
+        
+        self.setLayout(main_layout)
+    
     def load_students(self):
-        """Load existing students into the available list."""
+        """Load available and enrolled students."""
+        # Get all students
+        all_students = self.database.get_all_students()
+        
+        # If editing existing class, get enrolled students
+        if self.class_id:
+            enrolled_students = self.database.get_enrolled_students(self.class_id)
+            self.enrolled_students = [s for s in all_students if s['id'] in [es['student_id'] for es in enrolled_students]]
+            self.available_students = [s for s in all_students if s['id'] not in [es['student_id'] for es in enrolled_students]]
+        else:
+            self.available_students = all_students
+            self.enrolled_students = []
+        
+        # Populate lists
+        self.update_student_lists()
+    
+    def update_student_lists(self):
+        """Update the available and enrolled student lists."""
+        # Clear lists
         self.available_list.clear()
-        for student_id, student_data in self.student_manager.students.items():
-            self.available_list.addItem(f"{student_id} - {student_data['name']}")
-
+        self.enrolled_list.clear()
+        
+        # Add available students
+        for student in self.available_students:
+            item = QListWidgetItem(f"{student['id']} - {student['name']}")
+            item.setData(Qt.UserRole, student['id'])
+            self.available_list.addItem(item)
+        
+        # Add enrolled students
+        for student in self.enrolled_students:
+            item = QListWidgetItem(f"{student['id']} - {student['name']}")
+            item.setData(Qt.UserRole, student['id'])
+            self.enrolled_list.addItem(item)
+    
     def add_students(self):
-        """Add selected students to the enrolled list."""
-        for item in self.available_list.selectedItems():
-            self.enrolled_list.addItem(item.text())
-            self.available_list.takeItem(self.available_list.row(item))
-
+        """Add selected students to the class."""
+        selected_items = self.available_list.selectedItems()
+        if not selected_items:
+            return
+        
+        for item in selected_items:
+            student_id = item.data(Qt.UserRole)
+            student = next((s for s in self.available_students if s['id'] == student_id), None)
+            if student:
+                self.enrolled_students.append(student)
+                self.available_students.remove(student)
+        
+        self.update_student_lists()
+    
     def remove_students(self):
-        """Remove selected students from the enrolled list."""
-        for item in self.enrolled_list.selectedItems():
-            self.available_list.addItem(item.text())
-            self.enrolled_list.takeItem(self.enrolled_list.row(item))
-
-    def save_class(self):
-        """Save the class information."""
+        """Remove selected students from the class."""
+        selected_items = self.enrolled_list.selectedItems()
+        if not selected_items:
+            return
+        
+        for item in selected_items:
+            student_id = item.data(Qt.UserRole)
+            student = next((s for s in self.enrolled_students if s['id'] == student_id), None)
+            if student:
+                self.available_students.append(student)
+                self.enrolled_students.remove(student)
+        
+        self.update_student_lists()
+    
+    def populate_form(self):
+        """Populate form with existing class data."""
+        if not self.class_data:
+            return
+        
+        self.id_input.setText(str(self.class_data['id']))
+        self.name_input.setText(self.class_data['name'])
+        self.subject_input.setText(self.class_data['subject'])
+        self.location_input.setText(self.class_data['location'])
+        
+        # Load schedule
+        schedule = eval(self.class_data['schedule'])
+        if 'start_time' in schedule:
+            try:
+                start_time = QDateTime.fromString(
+                    schedule['start_time'], 
+                    "yyyy-MM-dd hh:mm:ss"
+                )
+                self.start_time_edit.setDateTime(start_time)
+            except:
+                pass
+        
+        if 'end_time' in schedule:
+            try:
+                end_time = QDateTime.fromString(
+                    schedule['end_time'], 
+                    "yyyy-MM-dd hh:mm:ss"
+                )
+                self.end_time_edit.setDateTime(end_time)
+            except:
+                pass
+    
+    def validate_inputs(self):
+        """Validate form inputs."""
+        class_id = self.id_input.text().strip()
+        name = self.name_input.text().strip()
+        
+        if not class_id:
+            QMessageBox.warning(self, "Validation Error", "Class ID is required.")
+            return False
+        
+        if not name:
+            QMessageBox.warning(self, "Validation Error", "Class name is required.")
+            return False
+        
+        # Check if class ID already exists (for new classes)
+        if not self.class_id:
+            existing_class = self.database.get_class(class_id)
+            if existing_class:
+                QMessageBox.warning(
+                    self, "Validation Error", 
+                    f"Class ID '{class_id}' already exists. Please use a different ID."
+                )
+                return False
+        
+        # Validate schedule
+        start_time = self.start_time_edit.dateTime()
+        end_time = self.end_time_edit.dateTime()
+        
+        if start_time >= end_time:
+            QMessageBox.warning(
+                self, "Validation Error", 
+                "End time must be after start time."
+            )
+            return False
+        
+        return True
+    
+    def accept(self):
+        """Handle dialog acceptance."""
+        if not self.validate_inputs():
+            return
+        
         class_id = self.id_input.text().strip()
         name = self.name_input.text().strip()
         subject = self.subject_input.text().strip()
-        room = self.room_input.text().strip()
-
-        if not all([class_id, name, subject, room]):
-            QMessageBox.warning(self, "Error", "Please fill all required fields.")
-            return
-
-        # Create schedule
+        room = self.location_input.text().strip()
+        
+        # Create schedule dictionary
         schedule = {
-            'day': self.day_combo.currentText(),
-            'start_time': self.start_time.time().toString("HH:mm"),
-            'end_time': self.end_time.time().toString("HH:mm")
+            'start_time': self.start_time_edit.dateTime().toString("yyyy-MM-dd hh:mm:ss"),
+            'end_time': self.end_time_edit.dateTime().toString("yyyy-MM-dd hh:mm:ss")
         }
-
-        # Get enrolled students
-        enrolled_students = []
-        for i in range(self.enrolled_list.count()):
-            student_id = self.enrolled_list.item(i).text().split(' - ')[0]
-            enrolled_students.append(student_id)
-
+        
         try:
-            # Add class to database
-            if self.student_manager.add_class(class_id, name, subject, schedule, room):
-                # Add students to class
-                for student_id in enrolled_students:
-                    self.student_manager.add_student_to_class(student_id, class_id)
-                
-                QMessageBox.information(self, "Success", "Class created successfully!")
-                self.accept()
+            # Add or update class
+            if self.class_id:
+                # Update existing class
+                success = self.database.update_class(
+                    class_id, name, subject, room, str(schedule)
+                )
+                if not success:
+                    QMessageBox.warning(
+                        self, "Update Error", 
+                        "Failed to update class. Please try again."
+                    )
+                    return
             else:
-                QMessageBox.warning(self, "Error", "Class ID already exists.")
+                # Add new class
+                success = self.database.add_class(
+                    class_id, name, subject, room, schedule
+                )
+                if not success:
+                    QMessageBox.warning(
+                        self, "Creation Error", 
+                        "Failed to create class. Please try again."
+                    )
+                    return
+            
+            # Update enrollments
+            # First, get current enrollments
+            current_enrollments = []
+            if self.class_id:
+                enrolled = self.database.get_enrolled_students(class_id)
+                current_enrollments = [e['student_id'] for e in enrolled]
+            
+            # Determine students to add and remove
+            new_enrollments = [s['id'] for s in self.enrolled_students]
+            
+            students_to_add = [sid for sid in new_enrollments if sid not in current_enrollments]
+            students_to_remove = [sid for sid in current_enrollments if sid not in new_enrollments]
+            
+            # Add new enrollments
+            for student_id in students_to_add:
+                self.database.enroll_student(class_id, student_id)
+            
+            # Remove old enrollments
+            for student_id in students_to_remove:
+                self.database.unenroll_student(class_id, student_id)
+            
+            # Get updated class data
+            class_data = self.database.get_class(class_id)
+            
+            # Emit signal with class data
+            self.class_updated.emit(class_data)
+            
+            QMessageBox.information(
+                self, "Success", 
+                f"Class '{name}' has been {'updated' if self.class_id else 'created'} successfully."
+            )
+            
+            super().accept()
+            
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create class: {str(e)}")
+            QMessageBox.critical(
+                self, "Error", 
+                f"An error occurred: {str(e)}"
+            )
+    
+    def reject(self):
+        """Handle dialog rejection."""
+        super().reject()

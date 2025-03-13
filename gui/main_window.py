@@ -1,143 +1,11 @@
 from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QTabWidget
+    QMainWindow, QWidget, QVBoxLayout, QTabWidget,
+    QPushButton, QLabel, QProgressBar, QLineEdit,
+    QComboBox, QTableWidget, QTableWidgetItem,
+    QHeaderView, QFrame, QScrollArea, QHBoxLayout,
+    QGridLayout, QMessageBox, QFileDialog, QDateEdit,
+    QDialog, QTimeEdit, QCalendarWidget
 )
-from PyQt5.QtCore import QTimer, Qt
-from PyQt5.QtGui import QImage, QPixmap
-import cv2
-import numpy as np
-from models.face_detector import FaceDetector
-from models.database import Database
-from gui.registration_dialog import RegistrationDialog
-
-
-class MainWindow(QMainWindow):
-    """Main application window."""
-
-    def __init__(self):
-        """Initialize main window."""
-        super().__init__()
-        self.setWindowTitle("Classroom Vision AI")
-        self.setMinimumSize(1024, 768)
-
-        # Initialize components
-        self.database = Database()
-        self.face_detector = FaceDetector()
-        self.cap = None
-        self.monitoring = False
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_frame)
-
-        # Setup UI
-        self.setup_ui()
-        self.setup_camera()
-
-    def setup_ui(self):
-        """Setup the main window UI."""
-        # Create central widget and layout
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-
-        # Create tab widget
-        tab_widget = QTabWidget()
-        layout.addWidget(tab_widget)
-
-        # Monitoring tab
-        monitoring_tab = QWidget()
-        monitoring_layout = QVBoxLayout(monitoring_tab)
-
-        # Camera feed
-        self.camera_label = QLabel()
-        self.camera_label.setMinimumSize(640, 480)
-        monitoring_layout.addWidget(self.camera_label)
-
-        # Controls
-        controls_layout = QHBoxLayout()
-        self.toggle_btn = QPushButton("Start Monitoring")
-        self.toggle_btn.clicked.connect(self.toggle_monitoring)
-        controls_layout.addWidget(self.toggle_btn)
-
-        self.register_btn = QPushButton("Register Student")
-        self.register_btn.clicked.connect(self.show_registration)
-        controls_layout.addWidget(self.register_btn)
-
-        monitoring_layout.addLayout(controls_layout)
-        tab_widget.addTab(monitoring_tab, "Monitoring")
-
-        # Analytics tab
-        analytics_tab = QWidget()
-        analytics_layout = QVBoxLayout(analytics_tab)
-        analytics_label = QLabel("Analytics Coming Soon!")
-        analytics_layout.addWidget(analytics_label)
-        tab_widget.addTab(analytics_tab, "Analytics")
-
-    def setup_camera(self):
-        """Initialize the camera capture."""
-        self.cap = cv2.VideoCapture(0)
-        if not self.cap.isOpened():
-            self.camera_label.setText(
-                "Could not open camera. Please check connection."
-            )
-            return
-
-        self.timer.start(30)  # 30ms = ~33 fps
-
-    def update_frame(self):
-        """Update the camera frame display."""
-        if not self.cap or not self.cap.isOpened():
-            return
-
-        ret, frame = self.cap.read()
-        if ret:
-            if self.monitoring:
-                # Detect faces
-                face_locations = self.face_detector.detect_faces(frame)
-                for face_loc in face_locations:
-                    # Draw rectangle around face
-                    top, right, bottom, left = face_loc
-                    cv2.rectangle(
-                        frame, (left, top), (right, bottom),
-                        (0, 255, 0), 2
-                    )
-
-            # Convert to RGB for display
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            h, w, ch = rgb_frame.shape
-            bytes_per_line = ch * w
-
-            # Convert to QImage and display
-            qt_image = QImage(
-                rgb_frame.data, w, h, bytes_per_line,
-                QImage.Format_RGB888
-            )
-            self.camera_label.setPixmap(
-                QPixmap.fromImage(qt_image).scaled(
-                    640, 480, Qt.KeepAspectRatio
-                )
-            )
-
-    def toggle_monitoring(self):
-        """Toggle face detection monitoring."""
-        self.monitoring = not self.monitoring
-        self.toggle_btn.setText(
-            "Stop Monitoring" if self.monitoring else "Start Monitoring"
-        )
-
-    def show_registration(self):
-        """Show the student registration dialog."""
-        dialog = RegistrationDialog(self)
-        dialog.exec_()
-
-    def closeEvent(self, event):
-        """Clean up resources when window is closed."""
-        if self.cap and self.cap.isOpened():
-            self.cap.release()
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QTabWidget,
-                             QPushButton, QLabel, QProgressBar, QLineEdit,
-                             QComboBox, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QFrame, QScrollArea, QHBoxLayout,
-                             QGridLayout, QMessageBox, QFileDialog, QDateEdit)
 from PyQt5.QtCore import Qt, QTimer, QDate
 from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPalette
 import cv2
@@ -148,6 +16,7 @@ from models.behavior_monitor import BehaviorMonitor
 from models.behavior_trainer import BehaviorTrainer
 from models.database import Database
 from gui.registration_dialog import RegistrationDialog
+import time
 
 
 class MainWindow(QMainWindow):
@@ -159,7 +28,6 @@ class MainWindow(QMainWindow):
         # Initialize components
         self.face_detector = FaceDetector()
         self.behavior_monitor = BehaviorMonitor()
-        self.behavior_trainer = BehaviorTrainer()
         self.database = Database()
         self.setup_ui()
         self.setup_camera()
@@ -169,7 +37,11 @@ class MainWindow(QMainWindow):
         self.training = False
         self.current_behavior = None
         self.class_start_time = None
-
+        self.current_class = None
+        self.check_in_window_active = False
+        self.current_attendance = []
+        self.check_in_times = {}
+        
     def setup_ui(self):
         """Setup the main UI components."""
         central_widget = QWidget()
@@ -183,6 +55,24 @@ class MainWindow(QMainWindow):
         # Monitoring tab
         monitoring_tab = QWidget()
         monitoring_layout = QVBoxLayout(monitoring_tab)
+        
+        # Class selection
+        class_layout = QHBoxLayout()
+        class_layout.addWidget(QLabel("Current Class:"))
+        self.class_combo = QComboBox()
+        self.update_class_list()
+        class_layout.addWidget(self.class_combo)
+        
+        # Add class button
+        add_class_btn = QPushButton("Add Class")
+        add_class_btn.clicked.connect(self.show_add_class_dialog)
+        class_layout.addWidget(add_class_btn)
+        monitoring_layout.addLayout(class_layout)
+        
+        # Start class button
+        start_class_btn = QPushButton("Start Class")
+        start_class_btn.clicked.connect(self.start_class)
+        monitoring_layout.addWidget(start_class_btn)
         
         # Camera feed
         self.camera_label = QLabel()
@@ -428,24 +318,33 @@ class MainWindow(QMainWindow):
         faces = self.face_detector.detect_faces(frame)
         
         if self.monitoring:
-            behaviors = self.behavior_monitor.analyze_frame(frame)
+            # Convert face detections to recognized students format
+            recognized_students = [
+                {
+                    'id': f'student_{i}',  # Placeholder ID until face recognition is implemented
+                    'face_location': face
+                }
+                for i, face in enumerate(faces)
+            ]
+            
+            # Get behaviors and annotated frame
+            behaviors, annotated_frame = self.behavior_monitor.analyze_frame(
+                frame, recognized_students
+            )
+            
+            # Update analytics with detected behaviors
             self.update_analytics(behaviors)
             
-            # Draw behavior indicators
-            for behavior in behaviors:
-                if 'face_location' in behavior:
-                    x1, y1, x2, y2 = behavior['face_location']
-                    color = (0, 255, 0)  # Green for attentive
-                    if behavior['type'] != 'attentive':
-                        color = (0, 0, 255)  # Red for other behaviors
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    
-                    # Add behavior label
-                    label = f"{behavior['type']} ({behavior['confidence']:.2f})"
-                    cv2.putText(
-                        frame, label, (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
-                    )
+            # Display annotated frame
+            frame = annotated_frame
+        else:
+            # Just draw face rectangles when not monitoring
+            for face in faces:
+                top, right, bottom, left = face
+                cv2.rectangle(
+                    frame, (left, top), (right, bottom),
+                    (0, 255, 0), 2
+                )
         
         # Convert frame for display
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -491,7 +390,146 @@ class MainWindow(QMainWindow):
             """)
             self.class_start_time = None
 
+    def show_add_class_dialog(self):
+        """Show dialog for adding a new class."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Add New Class")
+        layout = QVBoxLayout(dialog)
+        
+        # Class details
+        form_layout = QGridLayout()
+        form_layout.addWidget(QLabel("Class Name:"), 0, 0)
+        name_input = QLineEdit()
+        form_layout.addWidget(name_input, 0, 1)
+        
+        form_layout.addWidget(QLabel("Subject:"), 1, 0)
+        subject_input = QLineEdit()
+        form_layout.addWidget(subject_input, 1, 1)
+        
+        form_layout.addWidget(QLabel("Room:"), 2, 0)
+        room_input = QLineEdit()
+        form_layout.addWidget(room_input, 2, 1)
+        
+        # Schedule
+        form_layout.addWidget(QLabel("Schedule:"), 3, 0)
+        schedule_layout = QHBoxLayout()
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
+        day_checks = []
+        for day in days:
+            check = QPushButton(day)
+            check.setCheckable(True)
+            schedule_layout.addWidget(check)
+            day_checks.append(check)
+        form_layout.addLayout(schedule_layout, 3, 1)
+        
+        # Time
+        time_layout = QHBoxLayout()
+        start_time = QTimeEdit()
+        end_time = QTimeEdit()
+        time_layout.addWidget(QLabel("Time:"))
+        time_layout.addWidget(start_time)
+        time_layout.addWidget(QLabel("to"))
+        time_layout.addWidget(end_time)
+        form_layout.addLayout(time_layout, 4, 1)
+        
+        layout.addLayout(form_layout)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        save_btn = QPushButton("Save")
+        cancel_btn = QPushButton("Cancel")
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        save_btn.clicked.connect(lambda: self.save_class(
+            name_input.text(),
+            subject_input.text(),
+            room_input.text(),
+            [day_checks[i].isChecked() for i in range(len(days))],
+            start_time.time(),
+            end_time.time(),
+            dialog
+        ))
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        dialog.exec_()
+        
+    def save_class(self, name, subject, room, days, start_time, end_time, dialog):
+        """Save a new class to the database."""
+        if not name or not subject or not room:
+            QMessageBox.warning(self, "Error", "Please fill in all required fields")
+            return
+            
+        # Generate a unique class ID based on subject and name
+        class_id = f"{subject[:3]}{len(name)}_{int(time.time())}"
+        class_id = class_id.upper()
+        
+        schedule = {
+            'days': days,
+            'start_time': start_time.toString('HH:mm'),
+            'end_time': end_time.toString('HH:mm')
+        }
+        
+        try:
+            success = self.database.add_class(class_id, name, subject, room, schedule)
+            if success:
+                self.update_class_list()
+                dialog.accept()
+                QMessageBox.information(self, "Success", f"Class '{name}' has been created successfully.")
+            else:
+                QMessageBox.warning(self, "Error", "Failed to create class. Please try again.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"An error occurred: {str(e)}")
+        
+    def update_class_list(self):
+        """Update the class selection combo box."""
+        self.class_combo.clear()
+        classes = self.database.get_classes()
+        for class_info in classes:
+            self.class_combo.addItem(
+                f"{class_info['name']} - {class_info['subject']}",
+                class_info['id']
+            )
+            
+    def start_class(self):
+        """Start monitoring a class session."""
+        if not self.current_class:
+            QMessageBox.warning(
+                self, "Error", "Please select a class first"
+            )
+            return
+            
+        self.class_start_time = datetime.now()
+        self.check_in_window_active = True
+        self.monitoring = True
+        
+        # Start check-in window timer (15 minutes)
+        QTimer.singleShot(900000, self.close_check_in_window)
+        
+    def close_check_in_window(self):
+        """Close the check-in window and finalize initial attendance."""
+        self.check_in_window_active = False
+        if self.monitoring:
+            # Generate initial attendance report
+            self.generate_attendance_report()
+            
+    def generate_attendance_report(self):
+        """Generate attendance report for current session."""
+        if not self.current_class:
+            return
+            
+        attendance_data = {
+            'class_id': self.current_class,
+            'date': datetime.now().date(),
+            'students': self.current_attendance,
+            'check_in_times': self.check_in_times
+        }
+        
+        self.database.save_attendance(attendance_data)
+        
     def update_analytics(self, behaviors):
+        """Update analytics with behavior and attendance data."""
         if not self.class_start_time:
             return
             
@@ -504,31 +542,149 @@ class MainWindow(QMainWindow):
             f"Class Duration: {hours:02d}:{minutes:02d}:{seconds:02d}"
         )
         
-        # Update attendance progress
-        total_students = 30  # Example total
-        present_students = len(set(b['student'] for b in behaviors))
-        attendance_percent = (present_students / total_students) * 100
+        # Get class roster
+        if self.current_class:
+            total_students = len(
+                self.database.get_class_students(self.current_class)
+            )
+        else:
+            total_students = 0
+            
+        # Update attendance tracking
+        present_students = len(set(b['student_id'] for b in behaviors))
+        attendance_percent = (
+            (present_students / total_students) * 100 if total_students > 0 else 0
+        )
         self.attendance_bar.setValue(int(attendance_percent))
         self.attendance_bar.setFormat(
             f"Attendance: {present_students}/{total_students}"
         )
         
-        # Update statistics
-        stats = []
+        # Track check-ins during window
+        if self.check_in_window_active:
+            for behavior in behaviors:
+                student_id = behavior['student_id']
+                if student_id not in self.check_in_times:
+                    self.check_in_times[student_id] = datetime.now()
+                    
+        # Update behavior statistics
         behavior_counts = {}
+        student_behaviors = {}
+        
         for b in behaviors:
+            # Count behaviors
             behavior_counts[b['type']] = behavior_counts.get(
                 b['type'], 0
             ) + 1
-        
+            
+            # Track student-specific behaviors
+            student_id = b['student_id']
+            if student_id not in student_behaviors:
+                student_behaviors[student_id] = {}
+            student_behaviors[student_id][b['type']] = (
+                student_behaviors[student_id].get(b['type'], 0) + 1
+            )
+            
+        # Update statistics display
+        stats = []
         stats.append(f"Total Students Present: {present_students}")
         for behavior, count in behavior_counts.items():
             stats.append(f"{behavior.title()}: {count}")
+            
+        # Add student-specific statistics
+        stats.append("\nStudent Behaviors:")
+        for student_id, behaviors in student_behaviors.items():
+            student_name = self.database.get_student_name(student_id)
+            behavior_list = [
+                f"{b}: {c}" for b, c in behaviors.items()
+            ]
+            stats.append(
+                f"{student_name}: {', '.join(behavior_list)}"
+            )
+            
+        self.stats_label.setText("\n".join(stats))
         
-        self.stats_label = QLabel("\n".join(stats))
-        self.stats_label.setStyleSheet(
-            "font-size: 14px; color: #333;"
+    def generate_analytics(self):
+        """Generate analytics visualizations."""
+        if not self.start_date.date() or not self.end_date.date():
+            QMessageBox.warning(
+                self, "Error", "Please select date range"
+            )
+            return
+            
+        start_date = self.start_date.date().toPyDate()
+        end_date = self.end_date.date().toPyDate()
+        
+        # Get analytics data
+        attendance_data = self.database.get_attendance_data(
+            start_date, end_date
         )
+        behavior_data = self.database.get_behavior_data(
+            start_date, end_date
+        )
+        
+        # Generate visualizations
+        self.plot_attendance_trends(attendance_data)
+        self.plot_behavior_distribution(behavior_data)
+        self.plot_student_engagement(behavior_data)
+        
+    def plot_attendance_trends(self, data):
+        """Plot attendance trends over time."""
+        # Implementation for attendance visualization
+        pass
+        
+    def plot_behavior_distribution(self, data):
+        """Plot distribution of different behaviors."""
+        # Implementation for behavior distribution visualization
+        pass
+        
+    def plot_student_engagement(self, data):
+        """Plot student engagement metrics."""
+        # Implementation for engagement visualization
+        pass
+        
+    def export_data(self, format):
+        """Export analytics data in specified format."""
+        if not self.start_date.date() or not self.end_date.date():
+            QMessageBox.warning(
+                self, "Error", "Please select date range"
+            )
+            return
+            
+        start_date = self.start_date.date().toPyDate()
+        end_date = self.end_date.date().toPyDate()
+        
+        # Get data
+        attendance_data = self.database.get_attendance_data(
+            start_date, end_date
+        )
+        behavior_data = self.database.get_behavior_data(
+            start_date, end_date
+        )
+        
+        # Export path
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Report",
+            "",
+            f"{format.upper()} Files (*.{format.lower()})"
+        )
+        
+        if file_path:
+            if format.lower() == 'csv':
+                self.export_csv(file_path, attendance_data, behavior_data)
+            else:
+                self.export_json(file_path, attendance_data, behavior_data)
+                
+    def export_csv(self, path, attendance_data, behavior_data):
+        """Export data in CSV format."""
+        # Implementation for CSV export
+        pass
+        
+    def export_json(self, path, attendance_data, behavior_data):
+        """Export data in JSON format."""
+        # Implementation for JSON export
+        pass
 
     def load_training_video(self):
         """Load a video file for training."""
@@ -597,32 +753,6 @@ class MainWindow(QMainWindow):
             QPixmap.fromImage(image).scaled(960, 720, Qt.KeepAspectRatio)
         )
         
-    def generate_analytics(self):
-        """Generate analytics visualizations."""
-        start_date = self.start_date.date().toPyDate()
-        end_date = self.end_date.date().toPyDate()
-        
-        self.behavior_trainer.generate_analytics(start_date, end_date)
-        
-        # Display analytics images
-        analytics_path = (
-            self.behavior_trainer.analytics_dir / 'behavior_distribution.png'
-        )
-        if analytics_path.exists():
-            pixmap = QPixmap(str(analytics_path))
-            self.analytics_label.setPixmap(
-                pixmap.scaled(800, 600, Qt.KeepAspectRatio)
-            )
-            
-    def export_data(self, format):
-        """Export analytics data."""
-        self.behavior_trainer.export_data(format)
-        QMessageBox.information(
-            self,
-            "Export Complete",
-            f"Data exported to {self.behavior_trainer.analytics_dir}"
-        )
-
     def show_registration(self):
         dialog = RegistrationDialog(self)
         dialog.exec_()
